@@ -1,0 +1,337 @@
+import os
+import glob
+import sys
+import time
+import numpy as np
+import json
+import argparse
+from Envs.SNCOAT_Env_v2 import SNCOAT_Env_v2, DISCRETE_ACTIONS
+from DQN_pytorch_moren import DQN
+
+
+
+# from Agents.vanilla_DQN import VanillaDQN
+# from Agents.double_DQN import DoubleDQN
+# from Agents.dueling_DQN import DuelingDQN
+# from Agents.prioritized_DQN import PrioritizedDQN
+
+os.environ['COPPELIASIM_ROOT'] = os.environ['HOME'] + '/SNCOAT'+'/CoppeliaSim'
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.environ['COPPELIASIM_ROOT']
+
+
+def state_transform(state, env: SNCOAT_Env_v2):
+    """
+    Normalize depth channel of state
+    :param state: the state of observation
+    :param env: the simulation env
+    :return: norm_image
+    """
+    if env.observation_type == 'Color':
+        norm_image = state
+    elif env.observation_type == 'Depth':
+        norm_image = state / env.cam_far_distance
+    elif env.observation_type == 'RGBD':
+        image = state[:, :, :3]
+        depth = state[:, :, -1] / env.cam_far_distance
+        norm_image = np.append(image, np.expand_dims(depth, 2), axis=2)
+    else:
+        raise ValueError('Unsupported observation type!')
+    return norm_image
+
+
+class AVTEval(object):
+    def __init__(self, results_dir='result', report_dir='report', scenes_dir='Scenes',
+                 scenes_num=6, repetition=100, wait_steps=20):
+        super(AVTEval, self).__init__()
+
+        self.result_dir = os.path.join('lunwen/ceshi4', results_dir)
+        if os.path.exists(self.result_dir):
+            print('=> found results directory!')
+        else:
+            print('=> results directory is not found! it will be created soon ...')
+            os.makedirs(self.result_dir)
+
+        self.report_dir = os.path.join('lunwen/ceshi4', report_dir)
+        if os.path.exists(self.report_dir):
+            print('=> found reporting directory!')
+        else:
+            print('=> reporting directory is not found! it will be created soon ...')
+            os.makedirs(self.report_dir)
+
+        self.scenes_dir = scenes_dir
+
+        if os.path.exists(self.scenes_dir):
+            scene_paths = sorted(glob.glob(os.path.join(self.scenes_dir, '*.ttt')))
+            if len(scene_paths) > 0:
+                print('=> {} scenes have been found in {}'.format(len(scene_paths), self.scenes_dir))
+            else:
+                print('=> no scenes file have been found in {}'.format(self.scenes_dir))
+                sys.exit(1)
+        else:
+            print('=> scenes directory is not found! please check it again!')
+            sys.exit(1)
+
+        self.scene_paths = np.random.choice(scene_paths, scenes_num, replace=False)
+        self.repetition = repetition
+        self.wait_steps = wait_steps
+
+    def eval(self, agents, action_type='Discrete', actuator_type='Force', image_blur=True, blur_level=1,
+             overwrite=False, headless=True, max_episode_len=1000, actuator_noise=False, time_delay=False):
+        assert isinstance(agents, (list, tuple)), print('=> pass in agents with List() or Tuple() format')
+        assert action_type in ['Discrete', 'Continuous'], print('=> wrong action type!')
+        assert actuator_type in ['Force', 'Velocity', 'Position'], print('=> wrong actuator type')
+
+        for agent in agents:
+            print('=> eval {} ...'.format(agent.name))
+            agent_dir = os.path.join(self.result_dir, agent.name)
+            if not os.path.exists(agent_dir):
+                os.makedirs(agent_dir)
+
+            if not hasattr(agent, 'choose_action') or agent.action_type != action_type:
+                print('=> unsupported agent with wrong action type or without choose_action() method!')
+                print('=> skip to eval next agent ...')
+                continue
+
+            for i, scene_path in enumerate(self.scene_paths):
+                print('=> eval {} on scene {}'.format(agent.name, scene_path))
+                scene_dir = os.path.join(agent_dir, 'scene_{:02d}_{}'.format(i + 1, actuator_type))
+                if not os.path.exists(scene_dir):
+                    os.makedirs(scene_dir)
+
+                episode_lens = []
+                episode_lens_file = os.path.join(scene_dir, 'episode_lens.txt')
+                episode_rewards = []
+                episode_rewards_file = os.path.join(scene_dir, 'episode_rewards.txt')
+                episode_speeds = []
+                episode_speeds_file = os.path.join(scene_dir, 'episode_speeds.txt')
+
+                if os.path.exists(episode_lens_file) and os.path.exists(episode_rewards_file) and not overwrite:
+                    print('=> found recording files, skipping to next scenes')
+                    continue
+
+                # created Env instance with scene path
+                env = SNCOAT_Env_v2(name='scene_{:02d}'.format(i + 1), scene_path=scene_path, log_dir=agent_dir,
+                                    action_type=action_type, observation_type=agent.observe_type,
+                                    actuator_type=actuator_type, image_blur=True, blur_level=1,
+                                    clear_record=True, headless=headless, wait_done_steps=self.wait_steps,
+                                    actuator_noise=actuator_noise, time_delay=time_delay)
+
+                for r in range(self.repetition):
+                    print('=> eval {}/{} with agent {}'.format(r + 1, self.repetition, agent.name))
+                    if r % 2 == 0:
+                        record = True
+                    else:
+                        record = False
+
+                    state = env.reset(record)
+                    state = state_transform(state, env)
+
+                    rewards = []
+                    elapsed_time = 0
+                    while True:
+                        start_time = time.time()
+                        if action_type == 'Discrete':
+                            act_idx, action = agent.choose_action(state, env)
+                        else:
+                            action = agent.choose_action(state, env)
+                        end_time = time.time()
+                        elapsed_time += end_time - start_time
+
+                        state, reward, done, _ = env.env_step(action)
+                        state = state_transform(state, env)
+
+                        rewards.append(reward)
+
+                        if done or env.step_count > max_episode_len:
+                            env.save_records()
+                            break
+
+                    ep_reward = np.sum(rewards)
+                    print('=> Episode: {}/{}, Length: {}, Rewards: {:0.3f}, Speed: {:0.3f} Hz'.format(r + 1,
+                                                                                                      self.repetition,
+                                                                                                      env.step_count,
+                                                                                                      ep_reward,
+                                                                                                      env.step_count / elapsed_time))
+                    episode_rewards.append(ep_reward)
+                    episode_lens.append(env.step_count)
+                    episode_speeds.append(env.step_count / elapsed_time)
+                    tracking_save_path = env.record_video_path[:env.record_video_path.rfind('_')] + '_tracking.gif'
+                    agent.reset(is_record=record, record_path=tracking_save_path)
+
+                print('=> saving episode lens to {} ...'.format(episode_lens_file))
+                np.savetxt(episode_lens_file, episode_lens, fmt='%d', delimiter=',')
+                print('=> saving episode lens to {} ...'.format(episode_rewards_file))
+                np.savetxt(episode_rewards_file, episode_rewards, fmt='%.3f', delimiter=',')
+                print('=> saving episode speeds to {} ...'.format(episode_speeds_file))
+                np.savetxt(episode_speeds_file, episode_speeds, fmt='%.3f', delimiter=',')
+
+                print('=> closing env ...')
+                env.shutdown()
+
+    def report(self, agents, actuator_type='Force'):
+        assert isinstance(agents, (list, tuple)), print('=> pass in agents with List() or Tuple() format')
+        assert actuator_type in ['Force', 'Velocity', 'Position'], print('=> wrong actuator type!')
+
+        performance = {}
+        perf_file = os.path.join(self.report_dir, '{}_performance.json'.format(actuator_type))
+
+        for agent in agents:
+            performance[agent] = {}
+
+            agent_perf = {}
+            report_dir = os.path.join(self.report_dir, agent)
+            if not os.path.exists(report_dir):
+                print('=> report directory is not found, it will be created ...')
+                os.makedirs(report_dir)
+            report_file = os.path.join(report_dir, '{}_performance.json'.format(actuator_type))
+
+            print('=> retrieve the eval results of {} ...'.format(agent))
+            agent_dir = os.path.join(self.result_dir, agent)
+            if not os.path.exists(agent_dir):
+                print('=> the results directory of {} is not found!'.format(agent_dir))
+                # raise ValueError('=> the results directory of {} is not found!'.format(agent_dir))
+                continue
+
+            overall_rewards = []
+            overall_lens = []
+            overall_speeds = []
+            for i, scene_path in enumerate(self.scene_paths):
+                print('=> eval {} on scene {}'.format(agent, scene_path))
+                scene_name = 'scene_{:02d}_{}'.format(i + 1, actuator_type)
+                scene_dir = os.path.join(agent_dir, scene_name)
+                if not os.path.exists(scene_dir):
+                    raise ValueError(
+                        '=> the results directory on {}th scene of {} is not found!'.format(i + 1, agent_dir))
+                agent_perf[scene_name] = {}
+
+                episode_lens_file = os.path.join(scene_dir, 'episode_lens.txt')
+                episode_rewards_file = os.path.join(scene_dir, 'episode_rewards.txt')
+                episode_speeds_file = os.path.join(scene_dir, 'episode_speeds.txt')
+
+                episode_lens = np.loadtxt(episode_lens_file, delimiter=',')
+                episode_rewards = np.loadtxt(episode_rewards_file, delimiter=',')
+                episode_speeds = np.loadtxt(episode_speeds_file, delimiter=',')
+
+                overall_lens.append(episode_lens)
+                overall_rewards.append(episode_rewards)
+                overall_speeds.append(episode_speeds)
+
+                agent_perf[scene_name].update({
+                    'episode_lens': episode_lens.tolist(),
+                    'episode_rewards': episode_rewards.tolist(),
+                    'scene_average_len': np.mean(episode_lens),
+                    'scene_average_reward': np.mean(episode_rewards),
+                    'scene_average_speed': np.mean(episode_speeds)
+                })
+
+            overall_lens = np.concatenate(overall_lens)
+            overall_rewards = np.concatenate(overall_rewards)
+            overall_speeds = np.concatenate(overall_speeds)
+
+            agent_perf['average_len'] = np.mean(overall_lens)
+            agent_perf['average_reward'] = np.mean(overall_rewards)
+            agent_perf['average_speed'] = np.mean(overall_speeds)
+
+            performance[agent]['average_len'] = np.mean(overall_lens)
+            performance[agent]['average_reward'] = np.mean(overall_rewards)
+            performance[agent]['average_speed'] = np.mean(overall_speeds)
+
+            with open(report_file, 'w') as f:
+                print('=> report eval results of agent {} to {}'.format(agent, report_file))
+                json.dump(agent_perf, f, indent=4)
+
+        with open(perf_file, 'w') as f:
+            print('=> report overall eval results to {}'.format(perf_file))
+            json.dump(performance, f, indent=4)
+
+
+class RandomAgent(object):
+    def __init__(self, action_type='Discrete', observer_type='Color', ):
+        self.name = 'random_agent'
+        self.action_type = action_type
+        self.observe_type = observer_type
+
+    def choose_action(self, state, env: SNCOAT_Env_v2):
+        if self.action_type == 'Discrete':
+            action_idx = np.random.randint(0, len(DISCRETE_ACTIONS))
+            return action_idx, DISCRETE_ACTIONS[action_idx]
+        else:
+            action = env.action_space.sample() * 10
+            return action
+
+    def reset(self, is_record, record_path):
+        return
+
+
+parser = argparse.ArgumentParser('DQN for SNCOAT')
+parser.add_argument('--gpu_idx', type=int, default=1,
+                    help='gpu id')
+parser.add_argument('--scenes_num', type=int, default=6,
+                    help='the num of scenes used to evaluation')
+parser.add_argument('--repetition', type=int, default=20,
+                    help='the repetition times of evaluation on each scene')
+parser.add_argument('--log_dir', type=str, default='lunwen/log_ConvNet_RGBD1_ConvNet_multi_RGBD_Position/SNCOAT_Env_R2_Position/2',
+                    help='the logging directory')
+parser.add_argument('--dqn_type', type=str, default='Vanilla',
+                    help='the type of dqn variants in [Vanilla, Double, Prioritized, Dueling]')
+parser.add_argument('--observation_type', type=str, default='RGBD',
+                    help='the type of observation for env in [Color, Depth, RGBD]')
+parser.add_argument('--action_type', type=str, default='Discrete',
+                    help='the type of action for env in [Discrete, Continuous]')
+parser.add_argument('--actuator_type', type=str, default='Position',
+                    help='the type of actuator for chaser in [Force, Velocity, Position]')
+parser.add_argument('--backbone', type=str, default='ConvNet',
+                    help='the type of backbone net for DQN in [ConvNet, ResNet18, ResNet34, ResNet50]')
+parser.add_argument('--max_episode_len', type=int, default=1000,
+                    help='the maximum length of one episode for training')
+parser.add_argument('--headless', action='store_true',
+                    help='headless mode for CoppeliaSim platform')
+
+args = parser.parse_args()
+
+if __name__ == '__main__':
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+    scene_dir = os.environ['HOME'] + '/SNCOAT/Scenes/eval'
+    evaluator = AVTEval(scenes_dir=scene_dir,
+                        scenes_num=args.scenes_num, repetition=args.repetition, wait_steps=20)
+
+    dqn = DQN(observe_type='RGBD', log_dir='lunwen/log_ConvNet_RGBD1_ConvNet_multi_RGBD_Position/SNCOAT_Env_R2_Position/2',
+          backbone='ConvNet', restore=True, is_training=False)
+
+    # vanilla_dqn = VanillaDQN(
+    #     log_dir='train_v2/log_Vanilla_DQN_ConvNet_multi_RGBD_Position/SNCOAT_Env_Position',
+    #     observe_type='RGBD', name='Vanilla_DQN', backbone='ConvNet', gpu_idx=args.gpu_idx,
+    #     actuator_type='Position', restore=True, is_training=False, with_BN=True, with_layer4=True,
+    #     with_maxpool=True)
+
+    # double_dqn = DoubleDQN(log_dir='train_v5/log_Double_DQN_ConvNet_multi_RGBD_Position/SNCOAT_Env_Position',
+    #                        observe_type='RGBD', name='Double_DQN', backbone='ConvNet', gpu_idx=args.gpu_idx,
+    #                        actuator_type='Position', restore=True, is_training=False)
+
+    # dueling_dqn = DuelingDQN(log_dir='train_v5/log_Dueling_DQN_ConvNet_multi_RGBD_Position/SNCOAT_Env_Position',
+    #                          observe_type='RGBD', name='Dueling_DQN', backbone='ConvNet', gpu_idx=args.gpu_idx,
+    #                          actuator_type='Position', restore=True, is_training=False)
+
+    # prioritized_dqn = PrioritizedDQN(log_dir='train_v5/log_Prioritized_DQN_ConvNet_multi_RGBD_Position/SNCOAT_Env_Position',
+    #                                  observe_type='RGBD', name='Prioritized_DQN', backbone='ConvNet', gpu_idx=args.gpu_idx,
+    #                                  actuator_type='Position', restore=True, is_training=False)
+
+
+
+    rand_agent = RandomAgent(action_type='Discrete')
+    agents = [
+        rand_agent,
+        dqn
+    ]
+
+    evaluator.eval(agents, action_type='Discrete', actuator_type='Position', max_episode_len=1000,
+                   headless=True, overwrite=True, actuator_noise=False, time_delay=False, image_blur=False,
+                   blur_level=1)
+    agent_names = [
+        'random_agent',
+        'dqn'
+    ]
+    evaluator.report(agent_names, actuator_type='Position')
+
