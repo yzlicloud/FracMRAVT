@@ -1,0 +1,430 @@
+#coding=utf-8
+import argparse
+import os
+import numpy as np
+import glob
+import torch
+import random
+import copy
+
+from frac2 import AdaFm
+
+
+
+# from Envs.SNCOAT_Env_v2 import SNCOAT_Env_v2, DISCRETE_ACTIONS
+from Envs.SNCOAT_Env_v2V1 import SNCOAT_Env_v2, DISCRETE_ACTIONS
+
+
+
+
+
+# from DQN_pytorch_moren import DQN
+# from DQN_pytorch import DQN
+# from DQN_pytorchV1 import DQN
+# from DQN_pytorchV2 import DQN
+# from DQN_pytorchV3 import DQN
+# from DQN_pytorchV4 import DQN
+# from DQN_pytorchV9 import DQN
+# from DQN_pytorchV11 import DQN
+# from DQN_pytorchV28V2 import DQN    ### 默认的MAMl
+from DQN_pytorchV57 import DQN    ### 默认的MAMl
+# from DQN_pytorchV13 import DQN     ###   MAML  +   平均值
+# from DQN_pytorchV14 import DQN
+# from DQN_pytorchV15 import DQN   ###  frac
+# from DQN_pytorchV16 import DQN   ###  PID
+# from DQN_pytorchV17 import DQN     ### exp(grad)
+
+from collections import namedtuple
+
+SCENES_DIR = os.environ['HOME'] + '/SNCOAT/Scenes/train'
+SCENES_EVAL_DIR = os.environ['HOME'] + '/SNCOAT/Scenes/eval'
+
+# os.environ['COPPELIASIM_ROOT'] = os.environ['HOME'] + '/CoppeliaSim'
+# os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.environ['COPPELIASIM_ROOT']
+os.environ['COPPELIASIM_ROOT'] = os.environ['HOME'] +'/SNCOAT'+'/CoppeliaSim'
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.environ['COPPELIASIM_ROOT']
+
+def train():
+    scenes_paths = sorted(glob.glob(os.path.join(SCENES_DIR, '*.ttt')))
+    # scenes_eval_paths = sorted(glob.glob(os.path.join(SCENES_EVAL_DIR, '*.ttt')))
+    if args.multi_scene:
+        log_dir = args.logdir + '_{}_multi_{}_{}'.format(args.backbone, args.observation_type, args.actuator_type)
+        # log_dir = args.logdir + '_{}_multi_{}_{}'.format(args.backbone, args.observation_type, args.actuator_type)
+        # scene_path = scenes_paths[np.random.randint(0, len(scenes_paths))]
+        ##  1 method
+        scene_path_club = random.sample(scenes_paths, 12)
+        # scene_eval_path_club = random.sample(scenes_eval_paths, 6)
+        scene_path = scene_path_club[0]
+        # scene_eval_path = scene_eval_path_club[0]
+        ###  2 method
+        # scene_path = scenes_paths[np.random.sample(log_dir, 1)]
+    else:
+        log_dir = args.logdir + '_{}_{}_{}'.format(args.backbone, args.observation_type, args.actuator_type)
+        scene_path = scenes_paths[0]
+        # scene_eval_path = scenes_eval_paths[0]
+
+    if os.path.exists(log_dir):
+        print('=> logging directory is found in {}!'.format(log_dir))
+    else:
+        print('=> logging directory not found in {}, it will be created soon ...'.format(log_dir))
+        os.makedirs(log_dir)
+    env_name = 'SNCOAT_Env_R2'
+    env = SNCOAT_Env_v2(name=env_name, scene_path=scene_path, log_dir=log_dir,
+                        action_type=args.action_type, observation_type=args.observation_type,
+                        actuator_type=args.actuator_type, headless=args.headless,
+                        clear_record=True, wait_done_steps=10,
+                        actuator_noise=False, time_delay=False, image_blur=False)
+
+    dqn = DQN(observe_type=args.observation_type, log_dir=os.path.join(log_dir, env.name),
+              backbone=args.backbone, restore=args.restore, is_training=True,
+              replay_buffer_size=args.replay_buffer_size, batch_size=args.batch_size,
+              lr=args.lr, gamma=args.gamma, epsilon_factor=args.epsilon_factor,
+              update_interval=args.update_interval)
+    state = env.reset()
+    state = dqn.state_transform(state, env)
+    index_number = 0
+    print("=> Collecting Experience....")
+    # for index_number in range(0,12):
+    while True:
+        print('=> reloading scene in {} ...'.format(scene_path))
+        act_idx, action = dqn.choose_action(state, env)
+
+        next_state, reward, done, _ = env.env_step(action)
+        next_state = dqn.state_transform(next_state, env)
+
+
+        # dqn.store_transition(state, act_idx, reward, next_state)
+        ####     修改数据集的关键地点
+        if  index_number==0:
+            dqn.store_transition(state, act_idx, reward, next_state) 
+        if  index_number==1:
+            dqn.store_transition1(state, act_idx, reward, next_state)
+        if  index_number==2:
+            dqn.store_transition2(state, act_idx, reward, next_state)
+        if  index_number==3:
+            dqn.store_transition3(state, act_idx, reward, next_state)
+        if  index_number==4:
+            dqn.store_transition4(state, act_idx, reward, next_state)
+        if  index_number==5:
+            dqn.store_transition5(state, act_idx, reward, next_state)
+        if  index_number==6:
+            dqn.store_transition6(state, act_idx, reward, next_state)
+        if  index_number==7:
+            dqn.store_transition7(state, act_idx, reward, next_state)
+        if  index_number==8:
+            dqn.store_transition8(state, act_idx, reward, next_state)
+        if  index_number==9:
+            dqn.store_transition9(state, act_idx, reward, next_state)
+        if  index_number==10:        
+            dqn.store_transition10(state, act_idx, reward, next_state)
+        if  index_number==11:
+            dqn.store_transition11(state, act_idx, reward, next_state)
+        if  index_number==12:
+            break
+        #     dqn.store_transition11(state, act_idx, reward, next_state)
+        state = next_state
+
+
+        if  index_number==0 and dqn.memory_counter < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter + 1, args.init_buffer_size))
+
+        if  index_number==1 and dqn.memory_counter1 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter1 + 1, args.init_buffer_size))
+
+        if  index_number==2 and dqn.memory_counter2 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter2 + 1, args.init_buffer_size))
+
+        if  index_number==3 and dqn.memory_counter3 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter3 + 1, args.init_buffer_size))
+
+        if  index_number==4 and dqn.memory_counter4 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter4 + 1, args.init_buffer_size))
+
+        if  index_number==5 and dqn.memory_counter5 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter5 + 1, args.init_buffer_size))
+
+        if  index_number==6 and dqn.memory_counter6 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter6 + 1, args.init_buffer_size))
+
+        if  index_number==7 and dqn.memory_counter7 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter7 + 1, args.init_buffer_size))
+
+        if  index_number==8 and dqn.memory_counter8 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter8 + 1, args.init_buffer_size))
+
+        if  index_number==9 and dqn.memory_counter9 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter9 + 1, args.init_buffer_size))
+
+        if  index_number==10 and dqn.memory_counter10 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter10 + 1, args.init_buffer_size))
+
+        if  index_number==11 and dqn.memory_counter11 < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_counter11 + 1, args.init_buffer_size))
+
+
+
+
+
+
+        if dqn.memory_total_counter < args.init_buffer_size:
+            print('=> experience {}/{}'.format(dqn.memory_total_counter + 1, args.init_buffer_size))
+        else:
+            break
+
+
+
+        if done:
+            state = env.reset()
+            state = dqn.state_transform(state, env)
+            dqn.reset()
+
+        if dqn.memory_total_counter % 1000== 0 and args.multi_scene:
+            env.stop()
+            env.shutdown()
+            # env_index=scene_path_club[i]
+            # scene_path = scenes_paths[np.random.randint(0, len(scenes_paths))]
+            index_number= index_number +1
+            # if index_number>=12:
+            if index_number>=len(scene_path_club):
+
+                scene_eval_path = scene_path_club[0]
+                env = SNCOAT_Env_v2(name=env_name, scene_path=scene_eval_path, log_dir=log_dir,
+                                    action_type=args.action_type, observation_type=args.observation_type,
+                                    actuator_type=args.actuator_type, headless=args.headless,
+                                    clear_record=True, wait_done_steps=10,
+                                    actuator_noise=False, time_delay=False, image_blur=False)
+                state = env.reset()
+                state = dqn.state_transform(state, env)
+                dqn.reset()
+                break
+            scene_path = scene_path_club[index_number]
+            print('=> reloading scene in {} ...'.format(scene_path))
+            env = SNCOAT_Env_v2(name=env_name, scene_path=scene_path, log_dir=log_dir,
+                                action_type=args.action_type, observation_type=args.observation_type,
+                                actuator_type=args.actuator_type, headless=args.headless,
+                                clear_record=True, wait_done_steps=10,
+                                actuator_noise=False, time_delay=False, image_blur=False)
+            state = env.reset()
+            state = dqn.state_transform(state, env)
+            dqn.reset()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    print('=> Start training ...')
+    for i in range(args.episode_nums):
+        dqn.episode_counter += 1
+        model_path = os.path.join(dqn.logdir, 'QNet_ep_{:02d}.pth'.format(dqn.episode_counter % 3 + 1))
+        print('=> saving network to {} ...'.format(model_path))
+        checkpoint = {'episodes': dqn.episode_counter,
+                      'steps': dqn.learn_step_counter,
+                      'model_state_dict': dqn.eval_net.state_dict()}
+        torch.save(checkpoint, model_path, _use_new_zipfile_serialization=False)
+        print('=> model params is saved!')
+
+        print('=> training on {}th episode ...'.format(dqn.episode_counter))
+        if i % dqn.update_interval == 0 :
+            print('=> copying q-net params to target network ...')
+            dqn.target_net.load_state_dict(dqn.eval_net.state_dict())
+
+        if args.multi_scene:
+            env.stop()
+            env.shutdown()
+            index = np.random.randint(0, len(scenes_paths))
+            # index= i % (len(scene_path_club)-1)
+            # scene_path = scenes_paths[np.random.randint(0, len(scenes_paths))]
+            scene_path = scene_path_club[index]
+            print('=> reloading scene in {} ...'.format(scene_path))
+            env = SNCOAT_Env_v2(name=env_name, scene_path=scene_path, log_dir=log_dir,
+                                action_type=args.action_type, observation_type=args.observation_type,
+                                actuator_type=args.actuator_type, headless=args.headless,
+                                clear_record=True, wait_done_steps=10,
+                                actuator_noise=False, time_delay=False, image_blur=False)
+            
+
+        if i % args.record_interval == 0:
+            record = True
+        else:
+            record = False
+        # Reset the environment
+        state = env.reset(is_record=record)
+        state = dqn.state_transform(state, env)
+        dqn.reset()
+
+        ep_reward = 0
+        while True:
+
+            # dqn.eval_net.load_state_dict(dqn.eval_net.state_dict())
+            dqn.net_final.load_state_dict(dqn.eval_net.state_dict())
+
+            act_idx, action = dqn.choose_action(state, env)
+            next_state, reward, done, _ = env.env_step(action)
+            next_state = dqn.state_transform(next_state, env)
+
+
+            # if len(dqn.memory) == dqn.replay_buffer_size:
+            #         dqn.memory.pop(0)
+            # if len(dqn.memory) == dqn.replay_buffer_size:
+            #     dqn.memory.pop(0)
+
+            # Save transition to replay memory    修改数据集的关键地点
+            # dqn.store_transition(state, act_idx, reward, next_state)
+
+            if index==0:
+                if len(dqn.memory) == dqn.replay_buffer_size:
+                    dqn.memory.pop(0)
+                dqn.store_transition(state, act_idx, reward, next_state)
+
+
+            if index==1:
+                if len(dqn.memory1) == dqn.replay_buffer_size:
+                    dqn.memory1.pop(0)                
+                dqn.store_transition1(state, act_idx, reward, next_state)
+
+
+            if index==2:
+                if len(dqn.memory2) == dqn.replay_buffer_size:
+                    dqn.memory2.pop(0)  
+                dqn.store_transition2(state, act_idx, reward, next_state)
+
+
+            if index==3:
+                if len(dqn.memory3) == dqn.replay_buffer_size:
+                    dqn.memory3.pop(0)  
+                dqn.store_transition3(state, act_idx, reward, next_state)
+
+
+            if index==4:
+                if len(dqn.memory4) == dqn.replay_buffer_size:
+                    dqn.memory4.pop(0)  
+                dqn.store_transition4(state, act_idx, reward, next_state)
+
+
+            if index==5:
+
+                if len(dqn.memory5) == dqn.replay_buffer_size:
+                    dqn.memory5.pop(0)  
+                dqn.store_transition5(state, act_idx, reward, next_state)
+
+
+            if index==6:
+                if len(dqn.memory6) == dqn.replay_buffer_size:
+                    dqn.memory6.pop(0)  
+                dqn.store_transition6(state, act_idx, reward, next_state)
+
+
+            if index==7:
+                if len(dqn.memory7) == dqn.replay_buffer_size:
+                    dqn.memory7.pop(0)  
+                dqn.store_transition7(state, act_idx, reward, next_state)
+
+
+            if index==8:
+                if len(dqn.memory8) == dqn.replay_buffer_size:
+                    dqn.memory8.pop(0)  
+                dqn.store_transition8(state, act_idx, reward, next_state)
+
+            if index==9:
+                if len(dqn.memory9) == dqn.replay_buffer_size:
+                    dqn.memory9.pop(0)  
+                dqn.store_transition9(state, act_idx, reward, next_state)
+
+
+            if index==10:
+                if len(dqn.memory10) == dqn.replay_buffer_size:
+                    dqn.memory10.pop(0)  
+                dqn.store_transition10(state, act_idx, reward, next_state)
+
+
+            if index==11:
+                if len(dqn.memory11) == dqn.replay_buffer_size:
+                    dqn.memory11.pop(0)  
+                dqn.store_transition11(state, act_idx, reward, next_state)
+
+
+
+
+
+            ep_reward += reward
+
+            ###  the most important optimization process
+            dqn.learn()
+
+            # dqn.net_final.load_state_dict(dqn.eval_net.state_dict())
+            # dqn.eval_net.load_state_dict(dqn.net_final.state_dict())
+
+            if done or env.step_count > args.max_episode_len:
+                print("episode: {} , the episode reward is {}".format(dqn.episode_counter, round(ep_reward, 3)))
+                break
+
+            state = next_state
+        dqn.summary_writer.add_scalar('episode_len', env.step_count, global_step=dqn.episode_counter)
+        dqn.summary_writer.add_scalar('episode_reward', ep_reward, global_step=dqn.episode_counter)
+        env.save_records()
+
+
+parser = argparse.ArgumentParser('DQN for SNCOAT')
+parser.add_argument('--device', type=str, default='cuda:0',
+                    help='gpu id')
+parser.add_argument('--logdir', type=str, default='lunwen/log_ConvNet_RGBD1',
+                    help='the logging directory')
+parser.add_argument('--observation_type', type=str, default='RGBD',
+                    help='the type of observation for env in [Color, Depth, RGBD]')
+parser.add_argument('--action_type', type=str, default='Discrete',
+                    help='the type of action for env in [Discrete, Continuous]')
+parser.add_argument('--actuator_type', type=str, default='Position',
+                    help='the type of actuator for chaser in [Force, Velocity, Position]')
+parser.add_argument('--backbone', type=str, default='ConvNet',
+                    help='the type of backbone net for DQN in [ConvNet, ResNet18, ResNet34, ResNet50, ConvLSTM]')
+parser.add_argument('--replay_buffer_size', type=int, default=50000,
+                    help='the size fo replay experience buffer')
+parser.add_argument('--init_buffer_size', type=int, default=15000,
+                    help='the size fo initial replay experience buffer')
+parser.add_argument('--episode_nums', type=int, default=300,
+                    help='episode nums for DQN training')
+parser.add_argument('--max_episode_len', type=int, default=1000,
+                    help='the maximum length of one episode for training')
+parser.add_argument('--update_interval', type=int, default=10,
+                    help='the update interval of target network')
+parser.add_argument('--epsilon_factor', type=float, default=0.1,
+                    help='the start epsilon factor for action greedy algorithm')
+parser.add_argument('--batch_size', type=int, default=6,
+                    help='the batch size')
+parser.add_argument('--lr', type=float, default=1e-5,
+                    help='the learning rate for DQN')
+parser.add_argument('--gamma', type=float, default=0.99,
+                    help='the discount factor of future return')
+parser.add_argument('--record_interval', type=int, default=10,
+                    help='the interval of video recording')
+parser.add_argument('--headless', type=bool, default=True,
+                    help='headless mode for CoppeliaSim platform')
+parser.add_argument('--multi_scene', type=bool, default=True,
+                    help='training with multi_scene including different objects')
+parser.add_argument('--restore', type=bool, default=False,
+                    help='restore model params from file')
+args = parser.parse_args()
+
+if __name__ == '__main__':
+    torch.cuda.set_device(args.device)
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    train()
